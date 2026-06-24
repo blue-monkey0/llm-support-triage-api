@@ -1,8 +1,8 @@
 # LLM Support Triage API
 
-LLM Support Triage API is a FastAPI-based backend project that classifies customer support messages into issue categories and severity levels.
+LLM Support Triage API is a FastAPI-based backend project that classifies customer support messages using a Large Language Model.
 
-This project is designed as a practical FDE-oriented backend system. Instead of building a simple chatbot, it focuses on the first step of real customer support workflows: understanding the issue, classifying it, estimating severity, and suggesting the next action.
+This project is designed as a practical FDE-oriented AI backend system. Instead of building a simple chatbot, it focuses on the first step of real customer support workflows: understanding the issue, classifying it, estimating severity, and suggesting the next action.
 
 ## Problem
 
@@ -12,7 +12,7 @@ Support engineers often receive customer issues such as:
 * Payment failures
 * Slow API responses
 * Deployment-related errors
-* Integration issues
+* Third-party integration issues
 
 Before solving the issue, engineers need to quickly answer:
 
@@ -26,11 +26,14 @@ This process is called support triage.
 ## Current Features
 
 * FastAPI server setup
-* Health/root endpoint
 * POST `/triage` endpoint
-* Pydantic request validation
+* Pydantic request/response validation
 * Swagger UI API testing
-* Rule-based support ticket classification
+* Gemini API integration
+* LLM-based support ticket classification
+* Structured JSON response generation
+* Basic fallback response when LLM triage fails
+* Black and isort formatting setup
 
 ## API Example
 
@@ -38,7 +41,7 @@ This process is called support triage.
 
 ```json
 {
-  "message": "Login API returns 500 after deployment"
+  "message": "Payment is failing for all users after checkout"
 }
 ```
 
@@ -46,21 +49,21 @@ This process is called support triage.
 
 ```json
 {
-  "category": "authentication",
-  "severity": "high",
-  "summary": "Login-related issue detected.",
-  "next_action": "Check authentication service logs and recent deployments."
+  "category": "payment",
+  "severity": "critical",
+  "summary": "All payment transactions are failing for users after checkout.",
+  "next_action": "Escalate to the on-call engineering team and investigate payment gateway logs."
 }
 ```
 
-## Current Triage Logic
+## Response Fields
 
-| Keyword       | Category       | Severity |
-| ------------- | -------------- | -------- |
-| login         | authentication | high     |
-| payment       | payment        | high     |
-| slow, latency | performance    | medium   |
-| others        | general        | low      |
+| Field         | Description                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| `category`    | Issue category such as authentication, payment, performance, deployment, integration, or general |
+| `severity`    | Impact level: low, medium, high, or critical                                                     |
+| `summary`     | Short summary of the customer issue                                                              |
+| `next_action` | Recommended next step for support or engineering teams                                           |
 
 ## Tech Stack
 
@@ -68,28 +71,24 @@ This process is called support triage.
 * FastAPI
 * Pydantic
 * Uvicorn
+* Gemini API
+* python-dotenv
 * Swagger UI
+* Black
+* isort
 * Git / GitHub
 
-## Project Roadmap
+## Project Structure
 
-### Week 1
-
-* Build FastAPI server
-* Implement rule-based triage endpoint
-* Add request validation with Pydantic
-* Document API behavior
-* Prepare Docker execution environment
-
-### Next Steps
-
-* Integrate OpenAI API for LLM-based classification
-* Add structured response schema
-* Add error handling
-* Add latency measurement
-* Add logging
-* Add tests with pytest
-* Add Dockerfile
+```text
+app/
+├── main.py
+├── config.py
+├── schemas/
+│   └── triage.py
+└── services/
+    └── triage_service.py
+```
 
 ## How to Run
 
@@ -105,6 +104,52 @@ Open Swagger UI:
 http://127.0.0.1:8000/docs
 ```
 
+## Environment Variables
+
+Create a `.env` file in the project root.
+
+```text
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+`.env` should not be committed to GitHub.
+
+## Development Progress
+
+### Day 1
+
+* Set up Python 3.12
+* Created virtual environment
+* Initialized Git repository
+* Connected GitHub remote repository
+
+### Day 2
+
+* Built FastAPI server
+* Implemented GET and POST endpoints
+* Added Pydantic request validation
+* Tested API using Swagger UI
+* Implemented rule-based triage logic
+
+### Day 3
+
+* Refactored project structure into schemas and services
+* Added `.env` configuration
+* Integrated Gemini API
+* Designed prompt for support triage
+* Parsed LLM response into structured JSON
+* Added basic fallback handling
+
+## Next Steps
+
+* Improve exception handling
+* Add logging
+* Add response normalization
+* Add latency measurement
+* Add pytest tests
+* Add Dockerfile
+* Add deployment guide
+
 ## Why This Project Matters
 
-This project demonstrates the ability to convert an AI use case into a backend API service. It focuses on API design, request validation, structured responses, and customer-support-oriented workflow automation, which are important skills for Field Deployment Engineer and AI application engineering roles.
+This project demonstrates the ability to convert an AI use case into a backend API service. It focuses on API design, request validation, external LLM integration, structured responses, and customer-support-oriented workflow automation, which are important skills for Field Deployment Engineer and AI application engineering roles.
