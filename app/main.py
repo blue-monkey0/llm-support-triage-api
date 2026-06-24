@@ -1,7 +1,14 @@
+import logging
+
 from fastapi import FastAPI
 
 from app.schemas.triage import TriageRequest, TriageResponse
 from app.services.triage_service import triage_message
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 app = FastAPI()
 
