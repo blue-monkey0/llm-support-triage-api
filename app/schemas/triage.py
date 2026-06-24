@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -6,7 +8,19 @@ class TriageRequest(BaseModel):
 
 
 class TriageResponse(BaseModel):
-    category: str
-    severity: str
+    category: Literal[
+        "authentication",
+        "payment",
+        "performance",
+        "deployment",
+        "integration",
+        "general",
+    ]
+    severity: Literal[
+        "low",
+        "medium",
+        "high",
+        "critical",
+    ]
     summary: str
     next_action: str
