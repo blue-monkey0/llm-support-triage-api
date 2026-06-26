@@ -2,7 +2,7 @@
 
 A FastAPI-based backend service that analyzes customer support messages using Gemini API and returns structured triage results.
 
-This project is designed as a Field Deployment Engineer (FDE)-oriented portfolio project. It focuses not only on calling an LLM API, but also on building a reliable API workflow with request validation, response validation, normalization, fallback handling, logging, and automated tests.
+This project is designed as a Field Deployment Engineer (FDE)-oriented portfolio project. It focuses not only on calling an LLM API, but also on building a reliable and reproducible API workflow with request validation, response validation, normalization, fallback handling, logging, automated tests, and Docker-based execution.
 
 ---
 
@@ -33,6 +33,8 @@ The goal is to demonstrate how an LLM can be integrated into a production-aware 
 - Logging for observability
 - Automated API tests with pytest
 - Mocked Gemini-dependent test flow using monkeypatch
+- Dockerized API execution
+- Environment variable injection using `.env`
 
 ---
 
@@ -48,6 +50,7 @@ The goal is to demonstrate how an LLM can be integrated into a production-aware 
 - FastAPI TestClient
 - Black
 - isort
+- Docker
 
 ---
 
@@ -67,11 +70,15 @@ llm-support-triage-api/
 │       └── triage_service.py
 ├── tests/
 │   └── test_triage_api.py
+├── Dockerfile
+├── .dockerignore
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
 └── .env
 ```
+
+> `.env` is used locally and should not be committed to GitHub.
 
 ---
 
@@ -436,7 +443,7 @@ Do not commit `.env` to GitHub.
 
 ---
 
-### 5. Run the API Server
+### 5. Run the API Server Locally
 
 ```bash
 uvicorn app.main:app --reload
@@ -453,6 +460,181 @@ Swagger UI is available at:
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+---
+
+## Docker Setup
+
+This project can also be executed inside a Docker container.
+
+Docker makes the API easier to run in a reproducible environment without relying on the local Python virtual environment.
+
+---
+
+### 1. Build Docker Image
+
+```bash
+docker build -t llm-support-triage-api .
+```
+
+This command builds a Docker image using the `Dockerfile` in the project root.
+
+---
+
+### 2. Run Docker Container
+
+```bash
+docker run -p 8000:8000 --env-file .env --name triage-api llm-support-triage-api
+```
+
+This command:
+
+- Runs the `llm-support-triage-api` image as a container.
+- Maps local port `8000` to container port `8000`.
+- Injects environment variables from `.env`.
+- Assigns the container name `triage-api`.
+
+The API will be available at:
+
+```text
+http://127.0.0.1:8000
+```
+
+Swagger UI will be available at:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+---
+
+### 3. Stop Docker Container
+
+```bash
+docker stop triage-api
+```
+
+---
+
+### 4. Remove Docker Container
+
+```bash
+docker rm triage-api
+```
+
+---
+
+### 5. Run in Detached Mode
+
+To run the container in the background:
+
+```bash
+docker run -d -p 8000:8000 --env-file .env --name triage-api llm-support-triage-api
+```
+
+Check running containers:
+
+```bash
+docker ps
+```
+
+View logs:
+
+```bash
+docker logs triage-api
+```
+
+Stop the container:
+
+```bash
+docker stop triage-api
+```
+
+Remove the container:
+
+```bash
+docker rm triage-api
+```
+
+---
+
+### 6. Remove Stopped Containers
+
+To remove all stopped containers:
+
+```bash
+docker container prune
+```
+
+---
+
+## Docker Design Notes
+
+### Why use `python:3.12-slim`?
+
+The Docker image uses:
+
+```dockerfile
+FROM python:3.12-slim
+```
+
+This provides a lightweight Linux-based Python 3.12 environment.
+
+---
+
+### Why use `WORKDIR /app`?
+
+```dockerfile
+WORKDIR /app
+```
+
+This sets `/app` as the working directory inside the container.
+
+---
+
+### Why copy `requirements.txt` before copying `app/`?
+
+```dockerfile
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app ./app
+```
+
+This allows Docker to cache dependency installation separately from application code changes.
+
+If only the application code changes, Docker can reuse the dependency installation layer.
+
+---
+
+### Why use `--host 0.0.0.0`?
+
+Inside Docker, Uvicorn must listen on all network interfaces so that requests from the host machine can reach the container.
+
+```dockerfile
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+Using `127.0.0.1` inside the container would only bind to the container's own localhost, which can make it inaccessible from the host machine.
+
+---
+
+### Why exclude `.env` from Docker image?
+
+The `.env` file may contain sensitive secrets such as:
+
+```text
+GEMINI_API_KEY=...
+```
+
+For security, `.env` is excluded from the Docker image using `.dockerignore`.
+
+Instead, environment variables are injected at runtime:
+
+```bash
+docker run --env-file .env ...
+```
+
+This prevents secrets from being baked into the Docker image.
 
 ---
 
@@ -484,7 +666,7 @@ Example response:
 
 ## Development Commands
 
-### Run Server
+### Run Server Locally
 
 ```bash
 uvicorn app.main:app --reload
@@ -514,6 +696,30 @@ isort app tests
 isort app tests
 black app tests
 python3 -m pytest
+```
+
+### Build Docker Image
+
+```bash
+docker build -t llm-support-triage-api .
+```
+
+### Run Docker Container
+
+```bash
+docker run -p 8000:8000 --env-file .env --name triage-api llm-support-triage-api
+```
+
+### Stop Docker Container
+
+```bash
+docker stop triage-api
+```
+
+### Remove Docker Container
+
+```bash
+docker rm triage-api
 ```
 
 ---
@@ -591,11 +797,28 @@ Completed:
 
 ---
 
+### Day 6: Dockerization
+
+Completed:
+
+- Installed and verified Docker
+- Ran Docker test image successfully
+- Added `Dockerfile`
+- Added `.dockerignore`
+- Built Docker image
+- Ran FastAPI app inside Docker container
+- Passed `.env` variables into the container using `--env-file`
+- Verified API and Swagger UI from Docker container
+- Documented Docker build, run, stop, and remove commands
+
+---
+
 ## Current Status
 
 The project currently supports:
 
 - Local FastAPI execution
+- Docker-based FastAPI execution
 - Gemini-powered support triage
 - Structured API response
 - Validation for request and response schemas
@@ -604,30 +827,11 @@ The project currently supports:
 - Logging for observability
 - Automated endpoint tests
 - Mocked Gemini-dependent tests
+- Reproducible containerized execution
 
 ---
 
 ## Next Steps
-
-### Day 6: Dockerization
-
-Planned:
-
-- Add `Dockerfile`
-- Add `.dockerignore`
-- Build Docker image
-- Run FastAPI app inside a Docker container
-- Pass environment variables using `--env-file`
-- Document Docker usage in README
-
-Expected commands:
-
-```bash
-docker build -t llm-support-triage-api .
-docker run -p 8000:8000 --env-file .env llm-support-triage-api
-```
-
----
 
 ### Day 7: Week 1 Portfolio Polish
 
@@ -657,14 +861,16 @@ It includes:
 - Logging for debugging and observability
 - Automated API testing with pytest
 - Mocking external API dependencies for deterministic tests
+- Docker-based reproducible API execution
 
 A concise interview explanation:
 
 ```text
 I built an LLM-powered customer support triage API using FastAPI and Gemini API.
 The service receives a customer issue message and returns a structured triage result including category, severity, summary, and next action.
-To make the API more production-aware, I added Pydantic validation, response normalization, fallback handling, logging, and pytest-based endpoint tests.
+To make the API more production-aware, I added Pydantic validation, response normalization, fallback handling, logging, pytest-based endpoint tests, and Docker-based execution.
 The Gemini-dependent service function is mocked during tests to keep the test suite deterministic and independent of external API availability.
+The application can be run locally or inside a Docker container with environment variables injected at runtime.
 ```
 
 ---
