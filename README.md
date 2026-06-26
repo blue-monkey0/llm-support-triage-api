@@ -12,45 +12,74 @@ Customer support teams often receive many incoming issue reports with different 
 
 This API receives a customer support message and returns a structured triage result:
 
-- `category`
-- `severity`
-- `summary`
-- `next_action`
+* `category`
+* `severity`
+* `summary`
+* `next_action`
 
 The goal is to demonstrate how an LLM can be integrated into a production-aware backend API workflow.
 
 ---
 
+## Problem
+
+LLM-based applications often fail in practical backend workflows because their outputs can be inconsistent, unstructured, or difficult to consume by downstream systems.
+
+For example, an LLM may return slightly different category names such as:
+
+* `Payment`
+* `Payments`
+* `Billing`
+* `Checkout Issue`
+
+If an API consumer expects a stable response schema, this kind of variability can create integration problems.
+
+This project addresses that issue by wrapping an LLM call inside a structured API workflow that includes:
+
+* request validation
+* response validation
+* JSON parsing
+* category normalization
+* severity normalization
+* fallback handling
+* logging
+* automated tests
+* Dockerized execution
+
+---
+
 ## Key Features
 
-- FastAPI backend API
-- Gemini API integration
-- Pydantic request and response validation
-- Structured JSON response format
-- Category normalization
-- Severity normalization
-- Fallback response when LLM processing fails
-- Logging for observability
-- Automated API tests with pytest
-- Mocked Gemini-dependent test flow using monkeypatch
-- Dockerized API execution
-- Environment variable injection using `.env`
+* FastAPI backend API
+* Gemini API integration
+* Pydantic request and response validation
+* Structured JSON response format
+* Category normalization
+* Severity normalization
+* Fallback response when LLM processing fails
+* Logging for observability
+* Automated API tests with pytest
+* Mocked Gemini-dependent test flow using monkeypatch
+* Dockerized API execution
+* Environment variable injection using `.env`
+* Mermaid architecture and workflow diagrams
 
 ---
 
 ## Tech Stack
 
-- Python 3.12
-- FastAPI
-- Uvicorn
-- Pydantic
-- Gemini API
-- python-dotenv
-- pytest
-- FastAPI TestClient
-- Black
-- isort
-- Docker
+* Python 3.12
+* FastAPI
+* Uvicorn
+* Pydantic
+* Gemini API
+* python-dotenv
+* pytest
+* FastAPI TestClient
+* Black
+* isort
+* Docker
+* Mermaid
 
 ---
 
@@ -79,6 +108,66 @@ llm-support-triage-api/
 ```
 
 > `.env` is used locally and should not be committed to GitHub.
+
+---
+
+## Architecture
+
+### System Architecture
+
+```mermaid
+flowchart LR
+    Client[Client / Swagger / curl] --> FastAPI[FastAPI App]
+    FastAPI --> Validation[Pydantic Request Validation]
+    Validation --> Service[Triage Service]
+    Service --> Gemini[Gemini API]
+    Gemini --> Parsing[JSON Parsing]
+    Parsing --> Normalization[Category / Severity Normalization]
+    Normalization --> Response[TriageResponse]
+    Response --> Client
+    Service -->|On failure| Fallback[Fallback Response]
+    Fallback --> Response
+```
+
+The API receives a support message from a client, validates the request body with Pydantic, sends the message to the triage service, calls Gemini API, parses and normalizes the response, and returns a structured `TriageResponse`.
+
+If Gemini processing fails, the service logs the error and returns a fallback response that follows the same response schema.
+
+---
+
+### Test Flow
+
+```mermaid
+flowchart LR
+    Pytest[pytest] --> TestClient[FastAPI TestClient]
+    TestClient --> FastAPI[FastAPI App]
+    FastAPI --> Endpoint[POST /triage]
+    Endpoint --> MockedService[Mocked triage_message]
+    MockedService --> Response[TriageResponse]
+    Response --> Assertions[Test Assertions]
+```
+
+Automated tests use FastAPI's `TestClient` to exercise the API endpoints without starting a separate Uvicorn server.
+
+The Gemini-dependent `triage_message` function is mocked with `monkeypatch`, so tests remain deterministic and do not depend on API keys, network availability, quota limits, or external LLM response variability.
+
+---
+
+### Docker Runtime Flow
+
+```mermaid
+flowchart LR
+    Host[Mac Host] --> PortMapping[Port Mapping 8000:8000]
+    PortMapping --> Container[Docker Container]
+    Container --> Uvicorn[Uvicorn]
+    Uvicorn --> FastAPI[FastAPI App]
+    EnvFile[.env file] --> RuntimeEnv[Runtime Environment Variables]
+    RuntimeEnv --> Container
+```
+
+The Docker container runs the FastAPI app with Uvicorn. The host machine maps local port `8000` to container port `8000`, making the API available at `http://127.0.0.1:8000`.
+
+Secrets such as `GEMINI_API_KEY` are not baked into the Docker image. Instead, they are injected at runtime using `--env-file .env`.
 
 ---
 
@@ -127,12 +216,12 @@ Analyzes a customer support message and returns a structured triage result.
 
 The `/triage` endpoint returns the following response structure:
 
-| Field | Type | Description |
-|---|---|---|
-| `category` | string | The issue category |
-| `severity` | string | The urgency level |
-| `summary` | string | A short summary of the issue |
-| `next_action` | string | Recommended next step |
+| Field         | Type   | Description                  |
+| ------------- | ------ | ---------------------------- |
+| `category`    | string | The issue category           |
+| `severity`    | string | The urgency level            |
+| `summary`     | string | A short summary of the issue |
+| `next_action` | string | Recommended next step        |
 
 ---
 
@@ -152,13 +241,13 @@ general
 Examples:
 
 | Raw LLM Output | Normalized Category |
-|---|---|
-| `Payments` | `payment` |
-| `billing` | `payment` |
-| `auth` | `authentication` |
-| `login` | `authentication` |
-| `latency` | `performance` |
-| `webhook` | `integration` |
+| -------------- | ------------------- |
+| `Payments`     | `payment`           |
+| `billing`      | `payment`           |
+| `auth`         | `authentication`    |
+| `login`        | `authentication`    |
+| `latency`      | `performance`       |
+| `webhook`      | `integration`       |
 
 Unknown categories are logged and normalized to:
 
@@ -292,12 +381,12 @@ The service uses Python logging to record important runtime events.
 
 Examples:
 
-- Gemini API call started
-- Gemini API call succeeded
-- Unknown category received
-- Unknown severity received
-- Gemini triage failed
-- Fallback response returned
+* Gemini API call started
+* Gemini API call succeeded
+* Unknown category received
+* Unknown severity received
+* Gemini triage failed
+* Fallback response returned
 
 Logging helps with debugging, monitoring, and production troubleshooting.
 
@@ -309,12 +398,12 @@ This project includes automated API tests using `pytest` and FastAPI's `TestClie
 
 The tests verify:
 
-- The root health endpoint returns a successful response.
-- The `/triage` endpoint rejects invalid request bodies with a `422` validation error.
-- The `/triage` endpoint returns a valid triage response using a mocked Gemini-dependent service function.
-- The triage response follows the expected response contract.
-- The `category` and `severity` fields are within the allowed values.
-- The `summary` and `next_action` fields are strings.
+* The root health endpoint returns a successful response.
+* The `/triage` endpoint rejects invalid request bodies with a `422` validation error.
+* The `/triage` endpoint returns a valid triage response using a mocked Gemini-dependent service function.
+* The triage response follows the expected response contract.
+* The `category` and `severity` fields are within the allowed values.
+* The `summary` and `next_action` fields are strings.
 
 The Gemini API call is mocked during tests using `pytest`'s `monkeypatch` fixture. This keeps the test suite fast, deterministic, and independent of API keys, network conditions, quota limits, or Gemini response variability.
 
@@ -338,10 +427,10 @@ Warnings from FastAPI, Starlette, or httpx may appear depending on dependency ve
 
 Current tests cover:
 
-| Test | Purpose |
-|---|---|
-| `test_root_endpoint` | Verifies that `GET /` returns a successful health response |
-| `test_triage_requires_message_field` | Verifies that invalid request bodies return a `422` validation error |
+| Test                                        | Purpose                                                                                  |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `test_root_endpoint`                        | Verifies that `GET /` returns a successful health response                               |
+| `test_triage_requires_message_field`        | Verifies that invalid request bodies return a `422` validation error                     |
 | `test_triage_endpoint_with_mocked_response` | Verifies the successful `/triage` flow with the Gemini-dependent service function mocked |
 
 ---
@@ -352,12 +441,12 @@ The `/triage` endpoint depends on Gemini API in the actual service flow.
 
 However, automated tests should not depend on:
 
-- API keys
-- External network availability
-- Gemini quota limits
-- Gemini response variability
-- External API downtime
-- Additional API cost
+* API keys
+* External network availability
+* Gemini quota limits
+* Gemini response variability
+* External API downtime
+* Additional API cost
 
 Therefore, the Gemini-dependent service function is mocked during tests.
 
@@ -489,10 +578,10 @@ docker run -p 8000:8000 --env-file .env --name triage-api llm-support-triage-api
 
 This command:
 
-- Runs the `llm-support-triage-api` image as a container.
-- Maps local port `8000` to container port `8000`.
-- Injects environment variables from `.env`.
-- Assigns the container name `triage-api`.
+* Runs the `llm-support-triage-api` image as a container.
+* Maps local port `8000` to container port `8000`.
+* Injects environment variables from `.env`.
+* Assigns the container name `triage-api`.
 
 The API will be available at:
 
@@ -724,126 +813,146 @@ docker rm triage-api
 
 ---
 
-## Development Progress
+## Week 1 Retrospective
 
-### Day 1: Environment and Git Setup
+### What I Built
 
-Completed:
+I built an LLM-powered support triage API that receives a customer support message and returns a structured triage result.
 
-- Installed and configured Python 3.12
-- Created project directory
-- Created virtual environment
-- Initialized Git repository
-- Connected local repository to GitHub
-- Added initial project files
+The service is not just a direct wrapper around an LLM API. It includes a production-aware backend workflow with validation, normalization, fallback handling, logging, automated tests, and Dockerized execution.
 
 ---
 
-### Day 2: FastAPI Basics
+### Key Technical Decisions
 
-Completed:
+#### 1. Use FastAPI for the API Layer
 
-- Created FastAPI app
-- Added root health endpoint
-- Learned GET and POST endpoints
-- Added `/triage` endpoint
-- Introduced Pydantic request model
-- Tested API using Swagger UI
-- Built initial rule-based triage logic
+FastAPI was chosen because it provides a clean way to define API endpoints, request models, response models, and automatically generated Swagger documentation.
+
+It also integrates well with Pydantic, which made it useful for validating both incoming requests and outgoing responses.
 
 ---
 
-### Day 3: Gemini API Integration
+#### 2. Use Pydantic Models for Request and Response Contracts
 
-Completed:
+The API uses Pydantic models to define the expected input and output structure.
 
-- Added `.env` configuration
-- Loaded Gemini API key using `python-dotenv`
-- Tested Gemini API independently
-- Designed structured triage prompt
-- Requested valid JSON output from Gemini
-- Parsed Gemini response using `json.loads`
-- Integrated Gemini into `triage_service.py`
+This keeps the API contract explicit:
 
----
+* clients must send a `message` field
+* the server must return `category`, `severity`, `summary`, and `next_action`
 
-### Day 4: Reliability Improvements
-
-Completed:
-
-- Added logging
-- Added JSON parsing protection
-- Added category normalization
-- Added severity normalization
-- Added fallback response
-- Added Pydantic `Literal` constraints for allowed response values
-- Improved reliability of LLM-generated responses
+This helps prevent unexpected request and response shapes.
 
 ---
 
-### Day 5: Automated Testing
+#### 3. Normalize LLM Output Before Returning It
 
-Completed:
+LLM responses can vary even when the prompt asks for a specific structure.
 
-- Installed pytest
-- Added FastAPI TestClient
-- Added root endpoint test
-- Added request validation test for `/triage`
-- Added mocked `/triage` success flow test
-- Mocked Gemini-dependent service function using monkeypatch
-- Added response contract assertions
-- Added allowed category and severity assertions
-- Added README Testing documentation
+To make the API more stable, the service normalizes category and severity values into controlled sets.
+
+This makes the response easier to consume by downstream systems.
 
 ---
 
-### Day 6: Dockerization
+#### 4. Add Fallback Handling for LLM Failures
 
-Completed:
+External LLM APIs can fail due to quota limits, network issues, invalid responses, or unexpected formatting.
 
-- Installed and verified Docker
-- Ran Docker test image successfully
-- Added `Dockerfile`
-- Added `.dockerignore`
-- Built Docker image
-- Ran FastAPI app inside Docker container
-- Passed `.env` variables into the container using `--env-file`
-- Verified API and Swagger UI from Docker container
-- Documented Docker build, run, stop, and remove commands
+Instead of allowing those failures to crash the API, the service returns a safe fallback response that follows the same schema.
+
+This improves reliability and user experience.
 
 ---
 
-## Current Status
+#### 5. Mock Gemini During Automated Tests
 
-The project currently supports:
+The Gemini-dependent service function is mocked during endpoint tests.
 
-- Local FastAPI execution
-- Docker-based FastAPI execution
-- Gemini-powered support triage
-- Structured API response
-- Validation for request and response schemas
-- Category and severity normalization
-- Fallback behavior for LLM failures
-- Logging for observability
-- Automated endpoint tests
-- Mocked Gemini-dependent tests
-- Reproducible containerized execution
+This keeps tests:
+
+* fast
+* deterministic
+* independent of API keys
+* independent of network conditions
+* independent of quota limits
+* independent of Gemini response variability
+
+This is closer to how production API workflows should be tested.
 
 ---
 
-## Next Steps
+#### 6. Dockerize the API
 
-### Day 7: Week 1 Portfolio Polish
+The API was dockerized so it can run in a reproducible environment.
 
-Planned:
+Secrets such as the Gemini API key are not included in the image. Instead, they are injected at runtime using an environment file.
 
-- Final README cleanup
-- Add architecture diagram
-- Add API examples
-- Add troubleshooting section
-- Review GitHub repository structure
-- Write Week 1 retrospective
-- Prepare portfolio explanation for interviews
+This separates application code from sensitive configuration.
+
+---
+
+### Challenges
+
+#### 1. LLM Response Variability
+
+One challenge was that Gemini could return categories in slightly different formats, such as `Payments` instead of `payment`.
+
+This was addressed with category and severity normalization.
+
+---
+
+#### 2. External API Dependency in Tests
+
+Directly calling Gemini during tests would make the test suite slow, expensive, and unstable.
+
+This was addressed by mocking the Gemini-dependent function with `monkeypatch`.
+
+---
+
+#### 3. Safe Secret Handling in Docker
+
+The Gemini API key should not be copied into the Docker image.
+
+This was addressed by excluding `.env` from the Docker build context and injecting it only at runtime.
+
+---
+
+### What I Learned
+
+Through this project, I practiced building an LLM-powered API as a backend service rather than a simple chatbot.
+
+I learned how to:
+
+* structure a FastAPI project
+* define request and response models with Pydantic
+* integrate Gemini API into a backend service
+* parse and validate LLM-generated JSON
+* normalize unpredictable LLM outputs
+* add fallback behavior for external API failures
+* use logging for observability
+* write endpoint tests with pytest and TestClient
+* mock external API dependencies
+* dockerize a FastAPI application
+* pass secrets safely at runtime using environment variables
+* document architecture and runtime behavior in a README
+
+---
+
+### Future Improvements
+
+Potential improvements include:
+
+* adding GitHub Actions CI
+* adding more service-level unit tests
+* improving prompt versioning
+* making Gemini model name configurable with environment variables
+* adding latency logging
+* adding request IDs for traceability
+* deploying the API to a cloud runtime
+* adding a simple frontend or dashboard
+* adding persistent storage for triage history
 
 ---
 
@@ -853,15 +962,16 @@ This project demonstrates how to build a production-aware LLM-powered API servic
 
 It includes:
 
-- Backend API design with FastAPI
-- Request and response validation with Pydantic
-- Gemini API integration
-- LLM response normalization
-- Fallback handling for external API failures
-- Logging for debugging and observability
-- Automated API testing with pytest
-- Mocking external API dependencies for deterministic tests
-- Docker-based reproducible API execution
+* Backend API design with FastAPI
+* Request and response validation with Pydantic
+* Gemini API integration
+* LLM response normalization
+* Fallback handling for external API failures
+* Logging for debugging and observability
+* Automated API testing with pytest
+* Mocking external API dependencies for deterministic tests
+* Docker-based reproducible API execution
+* README-based architecture and workflow documentation
 
 A concise interview explanation:
 
@@ -871,6 +981,7 @@ The service receives a customer issue message and returns a structured triage re
 To make the API more production-aware, I added Pydantic validation, response normalization, fallback handling, logging, pytest-based endpoint tests, and Docker-based execution.
 The Gemini-dependent service function is mocked during tests to keep the test suite deterministic and independent of external API availability.
 The application can be run locally or inside a Docker container with environment variables injected at runtime.
+I also documented the system architecture, test flow, and Docker runtime flow using Mermaid diagrams in the README.
 ```
 
 ---
