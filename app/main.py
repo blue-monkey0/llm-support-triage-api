@@ -4,10 +4,11 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 
+from app.clients.gemini_client import GEMINI_MODEL
 from app.core.errors import AppError, ErrorCode
 from app.schemas.common import ErrorResponse, ResponseMetadata
 from app.schemas.triage import TriageRequest, TriageResponse
-from app.services.triage_service import GEMINI_MODEL, triage_message
+from app.services.triage_service import triage_message
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,7 +24,7 @@ app = FastAPI(
 )
 
 
-@app.get("/health_check")
+@app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
 

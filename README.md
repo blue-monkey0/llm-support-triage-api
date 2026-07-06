@@ -2,7 +2,7 @@
 
 HTTP API for classifying customer support messages into operational triage categories using an LLM-backed processing pipeline.
 
-The service accepts a support message, calls Gemini, validates and normalizes the model output, and returns a stable response envelope designed for downstream API consumers.
+The service accepts a support message, calls Gemini through an isolated provider client, validates and normalizes the model output, and returns a stable response envelope for downstream consumers.
 
 ---
 
@@ -19,14 +19,14 @@ Given a customer support message, the API returns:
 * request-scoped metadata
 * structured error details for fallback or failure scenarios
 
-The API is designed to make LLM output safer and easier to consume from backend services, internal tools, support dashboards, and automation pipelines.
+The API is designed to make LLM output safer and easier to consume from backend services, support dashboards, internal tools, and automation pipelines.
 
 ---
 
 ## Key Capabilities
 
 * FastAPI HTTP API
-* Gemini API integration
+* Gemini API integration through an isolated client layer
 * Pydantic request validation
 * Pydantic response validation
 * Stable v2 response envelope
@@ -40,7 +40,7 @@ The API is designed to make LLM output safer and easier to consume from backend 
 * Latency measurement
 * Logging for operational troubleshooting
 * Pytest-based API tests
-* Mocked LLM flow for deterministic tests
+* Mockable LLM client interface
 * Docker-based local runtime
 * Environment variable injection through `.env`
 
@@ -71,6 +71,9 @@ llm-support-triage-api/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── config.py
+│   ├── clients/
+│   │   ├── __init__.py
+│   │   └── gemini_client.py
 │   ├── core/
 │   │   ├── __init__.py
 │   │   └── errors.py
@@ -97,6 +100,18 @@ llm-support-triage-api/
 
 ## Architecture
 
+### Layer Responsibilities
+
+| Layer         | Path                             | Responsibility                                                                              |
+| ------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
+| API layer     | `app/main.py`                    | Handles HTTP requests, creates response envelopes, and exposes endpoints.                   |
+| Service layer | `app/services/triage_service.py` | Builds prompts, parses LLM output, normalizes values, and returns validated triage results. |
+| Client layer  | `app/clients/gemini_client.py`   | Owns direct communication with Gemini API.                                                  |
+| Schema layer  | `app/schemas/`                   | Defines request, response, result, error, and metadata contracts.                           |
+| Core layer    | `app/core/`                      | Defines shared application errors and error codes.                                          |
+
+---
+
 ### Request Flow
 
 ```mermaid
@@ -105,15 +120,18 @@ flowchart LR
     FastAPI --> Validation[Pydantic Request Validation]
     Validation --> Endpoint[API Endpoint]
     Endpoint --> Service[Triage Service]
-    Service --> Gemini[Gemini API]
-    Gemini --> Parsing[JSON Parsing]
+    Service --> GeminiClient[Gemini Client]
+    GeminiClient --> Gemini[Gemini API]
+    Gemini --> GeminiClient
+    GeminiClient --> Service
+    Service --> Parsing[JSON Parsing]
     Parsing --> Normalization[Category and Severity Normalization]
     Normalization --> Result[TriageResult]
     Result --> Envelope[TriageResponse Envelope]
     Envelope --> Client
 ```
 
-The API receives a support message from a client, validates the request body, sends the message to the triage service, calls Gemini, parses the model response, normalizes category and severity values, and returns a stable response envelope.
+The API receives a support message from a client, validates the request body, sends the message to the triage service, calls Gemini through the provider client, parses the model response, normalizes category and severity values, and returns a stable response envelope.
 
 ---
 
@@ -121,7 +139,8 @@ The API receives a support message from a client, validates the request body, se
 
 ```mermaid
 flowchart LR
-    Service[Triage Service] --> Gemini[Gemini API]
+    Service[Triage Service] --> GeminiClient[Gemini Client]
+    GeminiClient --> Gemini[Gemini API]
     Gemini --> Failure[Provider / Parse / Schema Failure]
     Failure --> AppError[AppError with ErrorCode]
     AppError --> Endpoint[API Endpoint]
@@ -370,13 +389,41 @@ This default is intentionally conservative. Returning `low` can hide important i
 
 ## Error Codes
 
-| Code                 | Meaning                                                            | Typical Cause                                                 |
-| -------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------- |
-| `LLM_PROVIDER_ERROR` | The upstream LLM provider failed.                                  | API key issue, provider outage, quota limit, network failure. |
-| `LLM_PARSE_ERROR`    | The model response could not be parsed as JSON.                    | Gemini returned prose, markdown, or malformed JSON.           |
-| `LLM_SCHEMA_ERROR`   | The model response was JSON but did not match the expected schema. | Missing `category`, `severity`, `summary`, or `next_action`.  |
-| `VALIDATION_ERROR`   | The request body failed validation.                                | Missing or empty `message` field.                             |
-| `INTERNAL_ERROR`     | Unexpected server-side failure.                                    | Unhandled application error.                                  |
+| Code                 | Meaning                                                            | Typical Cause                                                    |
+| -------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `LLM_PROVIDER_ERROR` | The upstream LLM provider failed.                                  | API key issue, provider outage, quota limit, or network failure. |
+| `LLM_PARSE_ERROR`    | The model response could not be parsed as JSON.                    | Gemini returned prose, markdown, or malformed JSON.              |
+| `LLM_SCHEMA_ERROR`   | The model response was JSON but did not match the expected schema. | Missing `category`, `severity`, `summary`, or `next_action`.     |
+| `VALIDATION_ERROR`   | The request body failed validation.                                | Missing or empty `message` field.                                |
+| `INTERNAL_ERROR`     | Unexpected server-side failure.                                    | Unhandled application error.                                     |
+
+---
+
+## Gemini Client
+
+Gemini API access is isolated in `app/clients/gemini_client.py`.
+
+The client layer owns provider-specific details such as:
+
+* Gemini SDK client initialization
+* model name
+* provider request execution
+* raw response text extraction
+* provider-level logging
+
+The service layer does not directly import or call the Gemini SDK.
+It depends on a client interface that exposes `generate_content(prompt: str) -> str`.
+
+This keeps the triage service focused on application logic:
+
+* prompt construction
+* response parsing
+* response validation
+* category normalization
+* severity normalization
+* domain result creation
+
+This separation makes the service easier to test and reduces coupling between business logic and provider-specific implementation details.
 
 ---
 
@@ -570,6 +617,16 @@ This protects downstream consumers from minor wording variations in model output
 
 ---
 
+### Provider Isolation
+
+Gemini-specific implementation details are isolated in the client layer.
+
+This prevents the service layer from depending directly on provider SDK details and makes the codebase easier to adapt if the provider changes later.
+
+For example, replacing Gemini with another LLM provider should primarily affect the client layer, not the triage service or API response contract.
+
+---
+
 ### Fallback Handling
 
 The service does not return fake successful triage data when LLM processing fails.
@@ -592,7 +649,7 @@ Instead, LLM failures are converted into fallback responses:
 }
 ```
 
-This allows clients to route fallback cases to manual review or a retry workflow.
+This allows clients to route fallback cases to manual review, retry, or operational monitoring workflows.
 
 ---
 
@@ -614,13 +671,13 @@ Typical events include:
 
 * Gemini API call started
 * Gemini API call succeeded
-* Unknown category received
-* Unknown severity received
+* unknown category received
+* unknown severity received
 * LLM provider failure
 * LLM parse failure
 * LLM schema failure
-* Fallback response returned
-* Unexpected server error
+* fallback response returned
+* unexpected server error
 
 Current log format:
 
@@ -646,15 +703,15 @@ The tests should verify:
 * `GET /health` returns `{"status": "ok"}`.
 * `POST /triage` rejects invalid request bodies.
 * `POST /triage` returns the v2 response envelope.
-* Success responses include `status`, `data`, `error`, and `metadata`.
+* success responses include `status`, `data`, `error`, and `metadata`.
 * `data.category` is one of the allowed categories.
 * `data.severity` is one of the allowed severities.
-* Fallback responses include a structured `error.code`.
+* fallback responses include a structured `error.code`.
 * Gemini-dependent flows are mocked during tests.
 
 ---
 
-## Why Mock Gemini in Tests?
+## Why Mock the LLM Client in Tests?
 
 The `/triage` endpoint depends on Gemini in the actual service flow.
 
@@ -667,7 +724,9 @@ Automated tests should not depend on:
 * external API downtime
 * additional API cost
 
-The Gemini-dependent service function should be mocked during tests so the test suite remains fast, deterministic, and reliable.
+The Gemini client should be mocked during tests so the test suite remains fast, deterministic, and reliable.
+
+The service function accepts an optional LLM client dependency, which allows tests to inject a fake client without calling the real provider.
 
 ---
 
@@ -940,6 +999,16 @@ This ID can be used to correlate API responses with server logs.
 
 ---
 
+### Provider Client Boundary
+
+Provider-specific code should remain inside `app/clients`.
+
+The service layer should avoid importing provider SDKs directly.
+
+This keeps the application easier to test, easier to maintain, and easier to migrate to another provider if needed.
+
+---
+
 ## Version
 
 Current API version:
@@ -948,14 +1017,12 @@ Current API version:
 0.2.0
 ```
 
-This version introduces the v2 response envelope:
+This version includes:
 
-```text
-status
-data
-error
-metadata
-```
+* v2 response envelope
+* structured error object
+* request metadata
+* Gemini provider client isolation
 
 ---
 
