@@ -1,68 +1,48 @@
 # LLM Support Triage API
 
-A FastAPI-based backend service that analyzes customer support messages using Gemini API and returns structured triage results.
+HTTP API for classifying customer support messages into operational triage categories using an LLM-backed processing pipeline.
 
-This project is designed as a Field Deployment Engineer (FDE)-oriented portfolio project. It focuses not only on calling an LLM API, but also on building a reliable and reproducible API workflow with request validation, response validation, normalization, fallback handling, logging, automated tests, and Docker-based execution.
-
----
-
-## Project Overview
-
-Customer support teams often receive many incoming issue reports with different levels of urgency. Manually classifying every issue can be slow and inconsistent.
-
-This API receives a customer support message and returns a structured triage result:
-
-* `category`
-* `severity`
-* `summary`
-* `next_action`
-
-The goal is to demonstrate how an LLM can be integrated into a production-aware backend API workflow.
+The service accepts a support message, calls Gemini, validates and normalizes the model output, and returns a stable response envelope designed for downstream API consumers.
 
 ---
 
-## Problem
+## Overview
 
-LLM-based applications often fail in practical backend workflows because their outputs can be inconsistent, unstructured, or difficult to consume by downstream systems.
+`llm-support-triage-api` provides a triage endpoint for support automation workflows.
 
-For example, an LLM may return slightly different category names such as:
+Given a customer support message, the API returns:
 
-* `Payment`
-* `Payments`
-* `Billing`
-* `Checkout Issue`
+* normalized issue category
+* normalized severity
+* concise issue summary
+* recommended next operational action
+* request-scoped metadata
+* structured error details for fallback or failure scenarios
 
-If an API consumer expects a stable response schema, this kind of variability can create integration problems.
-
-This project addresses that issue by wrapping an LLM call inside a structured API workflow that includes:
-
-* request validation
-* response validation
-* JSON parsing
-* category normalization
-* severity normalization
-* fallback handling
-* logging
-* automated tests
-* Dockerized execution
+The API is designed to make LLM output safer and easier to consume from backend services, internal tools, support dashboards, and automation pipelines.
 
 ---
 
-## Key Features
+## Key Capabilities
 
-* FastAPI backend API
+* FastAPI HTTP API
 * Gemini API integration
-* Pydantic request and response validation
-* Structured JSON response format
+* Pydantic request validation
+* Pydantic response validation
+* Stable v2 response envelope
+* Explicit success, fallback, and error states
+* Machine-readable error codes
 * Category normalization
 * Severity normalization
-* Fallback response when LLM processing fails
-* Logging for observability
-* Automated API tests with pytest
-* Mocked Gemini-dependent test flow using monkeypatch
-* Dockerized API execution
-* Environment variable injection using `.env`
-* Mermaid architecture and workflow diagrams
+* JSON parsing guard for LLM responses
+* Request-level metadata
+* Request ID generation
+* Latency measurement
+* Logging for operational troubleshooting
+* Pytest-based API tests
+* Mocked LLM flow for deterministic tests
+* Docker-based local runtime
+* Environment variable injection through `.env`
 
 ---
 
@@ -91,8 +71,12 @@ llm-support-triage-api/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── config.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   └── errors.py
 │   ├── schemas/
 │   │   ├── __init__.py
+│   │   ├── common.py
 │   │   └── triage.py
 │   └── services/
 │       ├── __init__.py
@@ -107,67 +91,47 @@ llm-support-triage-api/
 └── .env
 ```
 
-> `.env` is used locally and should not be committed to GitHub.
+> `.env` is used for local development and should not be committed to source control.
 
 ---
 
 ## Architecture
 
-### System Architecture
+### Request Flow
 
 ```mermaid
 flowchart LR
-    Client[Client / Swagger / curl] --> FastAPI[FastAPI App]
+    Client[Client / Swagger UI / curl] --> FastAPI[FastAPI App]
     FastAPI --> Validation[Pydantic Request Validation]
-    Validation --> Service[Triage Service]
+    Validation --> Endpoint[API Endpoint]
+    Endpoint --> Service[Triage Service]
     Service --> Gemini[Gemini API]
     Gemini --> Parsing[JSON Parsing]
-    Parsing --> Normalization[Category / Severity Normalization]
-    Normalization --> Response[TriageResponse]
-    Response --> Client
-    Service -->|On failure| Fallback[Fallback Response]
-    Fallback --> Response
+    Parsing --> Normalization[Category and Severity Normalization]
+    Normalization --> Result[TriageResult]
+    Result --> Envelope[TriageResponse Envelope]
+    Envelope --> Client
 ```
 
-The API receives a support message from a client, validates the request body with Pydantic, sends the message to the triage service, calls Gemini API, parses and normalizes the response, and returns a structured `TriageResponse`.
-
-If Gemini processing fails, the service logs the error and returns a fallback response that follows the same response schema.
+The API receives a support message from a client, validates the request body, sends the message to the triage service, calls Gemini, parses the model response, normalizes category and severity values, and returns a stable response envelope.
 
 ---
 
-### Test Flow
+### Fallback Flow
 
 ```mermaid
 flowchart LR
-    Pytest[pytest] --> TestClient[FastAPI TestClient]
-    TestClient --> FastAPI[FastAPI App]
-    FastAPI --> Endpoint[POST /triage]
-    Endpoint --> MockedService[Mocked triage_message]
-    MockedService --> Response[TriageResponse]
-    Response --> Assertions[Test Assertions]
+    Service[Triage Service] --> Gemini[Gemini API]
+    Gemini --> Failure[Provider / Parse / Schema Failure]
+    Failure --> AppError[AppError with ErrorCode]
+    AppError --> Endpoint[API Endpoint]
+    Endpoint --> Envelope[Fallback Response Envelope]
+    Envelope --> Client[Client]
 ```
 
-Automated tests use FastAPI's `TestClient` to exercise the API endpoints without starting a separate Uvicorn server.
+The service raises an application-level error when the LLM provider fails, the model response cannot be parsed, or the response does not match the expected schema.
 
-The Gemini-dependent `triage_message` function is mocked with `monkeypatch`, so tests remain deterministic and do not depend on API keys, network availability, quota limits, or external LLM response variability.
-
----
-
-### Docker Runtime Flow
-
-```mermaid
-flowchart LR
-    Host[Mac Host] --> PortMapping[Port Mapping 8000:8000]
-    PortMapping --> Container[Docker Container]
-    Container --> Uvicorn[Uvicorn]
-    Uvicorn --> FastAPI[FastAPI App]
-    EnvFile[.env file] --> RuntimeEnv[Runtime Environment Variables]
-    RuntimeEnv --> Container
-```
-
-The Docker container runs the FastAPI app with Uvicorn. The host machine maps local port `8000` to container port `8000`, making the API available at `http://127.0.0.1:8000`.
-
-Secrets such as `GEMINI_API_KEY` are not baked into the Docker image. Instead, they are injected at runtime using `--env-file .env`.
+The endpoint converts that application error into a structured fallback response.
 
 ---
 
@@ -175,7 +139,7 @@ Secrets such as `GEMINI_API_KEY` are not baked into the Docker image. Instead, t
 
 ### `GET /`
 
-Health check endpoint.
+Basic service check.
 
 #### Response
 
@@ -187,47 +151,167 @@ Health check endpoint.
 
 ---
 
+### `GET /health`
+
+Health check endpoint.
+
+#### Response
+
+```json
+{
+  "status": "ok"
+}
+```
+
+This endpoint verifies that the API process is running and can respond to requests.
+
+---
+
 ### `POST /triage`
 
-Analyzes a customer support message and returns a structured triage result.
+Classifies a customer support message and returns a structured triage response.
 
 #### Request Body
 
 ```json
 {
-  "message": "Payment is failing for all users after checkout"
+  "message": "Users cannot log in with SSO after the latest deployment."
 }
 ```
 
-#### Response Body
+#### Success Response
+
+```json
+{
+  "status": "success",
+  "data": {
+    "category": "authentication",
+    "severity": "high",
+    "summary": "Users cannot log in with SSO after the latest deployment.",
+    "next_action": "Check SSO provider logs, validate token claims, and review authentication-related deployment changes."
+  },
+  "error": null,
+  "metadata": {
+    "request_id": "req_9f1c2d...",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 842
+  }
+}
+```
+
+---
+
+## Response Contract
+
+The `/triage` endpoint returns a stable response envelope.
+
+Clients should branch on `status` first and use `error.code` for programmatic error handling.
+
+### Top-Level Fields
+
+| Field      | Type           | Description                                                               |
+| ---------- | -------------- | ------------------------------------------------------------------------- |
+| `status`   | string         | Processing status. One of `success`, `fallback`, or `error`.              |
+| `data`     | object or null | Validated triage result. Present when `status` is `success`.              |
+| `error`    | object or null | Structured error details. Present when `status` is `fallback` or `error`. |
+| `metadata` | object         | Request-scoped operational metadata.                                      |
+
+---
+
+### `status`
+
+Allowed values:
+
+```text
+success
+fallback
+error
+```
+
+| Status     | Meaning                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------- |
+| `success`  | The service produced a validated triage result.                                                   |
+| `fallback` | The service could not produce a validated LLM result and returned a controlled fallback response. |
+| `error`    | The request failed due to an unexpected internal service error.                                   |
+
+---
+
+### `data`
+
+`data` contains the validated triage result.
+
+It is present only when `status` is `success`.
 
 ```json
 {
   "category": "payment",
   "severity": "critical",
-  "summary": "Payment issue detected.",
-  "next_action": "Check payment gateway logs."
+  "summary": "Checkout payments are failing for multiple users.",
+  "next_action": "Check payment gateway health, recent deployment changes, and transaction failure logs."
 }
 ```
 
+#### Data Fields
+
+| Field         | Type   | Description                            |
+| ------------- | ------ | -------------------------------------- |
+| `category`    | string | Normalized support issue category.     |
+| `severity`    | string | Normalized operational severity.       |
+| `summary`     | string | Concise summary of the customer issue. |
+| `next_action` | string | Recommended next operational action.   |
+
 ---
 
-## Response Schema
+### `error`
 
-The `/triage` endpoint returns the following response structure:
+`error` contains structured failure details.
 
-| Field         | Type   | Description                  |
-| ------------- | ------ | ---------------------------- |
-| `category`    | string | The issue category           |
-| `severity`    | string | The urgency level            |
-| `summary`     | string | A short summary of the issue |
-| `next_action` | string | Recommended next step        |
+It is `null` when `status` is `success`.
+
+```json
+{
+  "code": "LLM_PARSE_ERROR",
+  "message": "The model response could not be parsed as valid JSON."
+}
+```
+
+#### Error Fields
+
+| Field     | Type   | Description                        |
+| --------- | ------ | ---------------------------------- |
+| `code`    | string | Machine-readable error code.       |
+| `message` | string | Human-readable diagnostic message. |
+
+Clients should use `error.code` for control flow.
+Clients should not parse `error.message`.
+
+---
+
+### `metadata`
+
+`metadata` contains request-scoped operational information.
+
+```json
+{
+  "request_id": "req_9f1c2d...",
+  "model": "gemini-2.5-flash",
+  "latency_ms": 842
+}
+```
+
+#### Metadata Fields
+
+| Field        | Type            | Description                                     |
+| ------------ | --------------- | ----------------------------------------------- |
+| `request_id` | string          | Unique identifier for tracing a single request. |
+| `model`      | string or null  | LLM model used for the request.                 |
+| `latency_ms` | integer or null | End-to-end request latency in milliseconds.     |
 
 ---
 
 ## Allowed Categories
 
-The API normalizes categories into one of the following values:
+The API normalizes model output into one of the following category values:
 
 ```text
 authentication
@@ -238,18 +322,24 @@ integration
 general
 ```
 
-Examples:
+### Category Examples
 
 | Raw LLM Output | Normalized Category |
 | -------------- | ------------------- |
-| `Payments`     | `payment`           |
-| `billing`      | `payment`           |
 | `auth`         | `authentication`    |
 | `login`        | `authentication`    |
+| `sso`          | `authentication`    |
+| `billing`      | `payment`           |
+| `payments`     | `payment`           |
+| `checkout`     | `payment`           |
 | `latency`      | `performance`       |
+| `timeout`      | `performance`       |
+| `deploy`       | `deployment`        |
+| `rollback`     | `deployment`        |
 | `webhook`      | `integration`       |
+| `third-party`  | `integration`       |
 
-Unknown categories are logged and normalized to:
+Unknown category values are normalized to:
 
 ```text
 general
@@ -259,7 +349,7 @@ general
 
 ## Allowed Severities
 
-The API normalizes severity into one of the following values:
+The API normalizes model output into one of the following severity values:
 
 ```text
 low
@@ -268,233 +358,322 @@ high
 critical
 ```
 
-Unknown severity values are logged and normalized to:
+Unknown severity values are normalized to:
 
 ```text
 medium
 ```
 
-This fallback is intentionally conservative. Returning `low` could hide potentially important issues, while returning `critical` too often could create alert fatigue.
+This default is intentionally conservative. Returning `low` can hide important issues, while returning `critical` too often can create alert fatigue.
 
 ---
 
-## Reliability Features
+## Error Codes
 
-This project includes several reliability-oriented safeguards.
+| Code                 | Meaning                                                            | Typical Cause                                                 |
+| -------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------- |
+| `LLM_PROVIDER_ERROR` | The upstream LLM provider failed.                                  | API key issue, provider outage, quota limit, network failure. |
+| `LLM_PARSE_ERROR`    | The model response could not be parsed as JSON.                    | Gemini returned prose, markdown, or malformed JSON.           |
+| `LLM_SCHEMA_ERROR`   | The model response was JSON but did not match the expected schema. | Missing `category`, `severity`, `summary`, or `next_action`.  |
+| `VALIDATION_ERROR`   | The request body failed validation.                                | Missing or empty `message` field.                             |
+| `INTERNAL_ERROR`     | Unexpected server-side failure.                                    | Unhandled application error.                                  |
 
-### 1. Request Validation
+---
 
-The request body is validated using Pydantic.
+## Example Requests
 
-The `/triage` endpoint requires a `message` field:
+### curl
 
-```json
-{
-  "message": "Login API returns 500 after deployment"
-}
+```bash
+curl -X POST "http://127.0.0.1:8000/triage" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Users cannot log in with SSO after the latest deployment."
+  }'
 ```
 
-If the request body is invalid, FastAPI returns a `422` validation error before the endpoint logic is executed.
+### Swagger UI
 
-Example invalid request:
-
-```json
-{
-  "text": "Payment is failing"
-}
-```
-
-Expected behavior:
+Swagger UI is available at:
 
 ```text
-422 Unprocessable Entity
+http://127.0.0.1:8000/docs
 ```
 
----
-
-### 2. Response Validation
-
-The response is validated with a Pydantic response model.
-
-The API must return:
+Use the `POST /triage` endpoint and provide the following request body:
 
 ```json
 {
-  "category": "payment",
-  "severity": "critical",
-  "summary": "...",
-  "next_action": "..."
+  "message": "Users cannot log in with SSO after the latest deployment."
 }
 ```
 
-This prevents unexpected response structures from being returned to API users.
+Swagger UI and curl send the same underlying HTTP request when the method, URL, headers, and JSON body match.
 
 ---
 
-### 3. JSON Parsing Guard
+## Example Responses
 
-The Gemini response is expected to be valid JSON.
-
-If parsing fails, the service does not crash the application. Instead, it logs the error and returns a fallback response.
-
----
-
-### 4. Category and Severity Normalization
-
-LLM output can vary.
-
-For example, Gemini may return:
-
-```text
-Payments
-Billing
-Auth
-Latency
-```
-
-The service normalizes these values into a controlled set of allowed categories and severities.
-
-This makes the API response more predictable and easier to consume by downstream systems.
-
----
-
-### 5. Fallback Response
-
-If Gemini API processing fails, the service returns a safe fallback response instead of breaking the API.
-
-The fallback response follows the same response schema:
+### Success
 
 ```json
 {
-  "category": "general",
-  "severity": "medium",
-  "summary": "Unable to complete automated triage.",
-  "next_action": "Review the customer message manually and assign it to the appropriate support team."
+  "status": "success",
+  "data": {
+    "category": "authentication",
+    "severity": "high",
+    "summary": "Users cannot log in with SSO after the latest deployment.",
+    "next_action": "Check SSO provider logs, validate token claims, and review authentication-related deployment changes."
+  },
+  "error": null,
+  "metadata": {
+    "request_id": "req_9f1c2d...",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 842
+  }
+}
+```
+
+### Fallback: Provider Error
+
+```json
+{
+  "status": "fallback",
+  "data": null,
+  "error": {
+    "code": "LLM_PROVIDER_ERROR",
+    "message": "The upstream LLM provider returned an error."
+  },
+  "metadata": {
+    "request_id": "req_9f1c2d...",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 1032
+  }
+}
+```
+
+### Fallback: Parse Error
+
+```json
+{
+  "status": "fallback",
+  "data": null,
+  "error": {
+    "code": "LLM_PARSE_ERROR",
+    "message": "The model response could not be parsed as valid JSON."
+  },
+  "metadata": {
+    "request_id": "req_9f1c2d...",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 917
+  }
+}
+```
+
+### Fallback: Schema Error
+
+```json
+{
+  "status": "fallback",
+  "data": null,
+  "error": {
+    "code": "LLM_SCHEMA_ERROR",
+    "message": "The model response is missing one or more required fields."
+  },
+  "metadata": {
+    "request_id": "req_9f1c2d...",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 911
+  }
+}
+```
+
+### Internal Error
+
+```json
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "Unexpected server error occurred."
+  },
+  "metadata": {
+    "request_id": "req_9f1c2d...",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 24
+  }
 }
 ```
 
 ---
 
-### 6. Logging
+## Reliability Design
 
-The service uses Python logging to record important runtime events.
+### Request Validation
 
-Examples:
+The request body is validated before endpoint logic is executed.
+
+Valid request:
+
+```json
+{
+  "message": "Login API returns 500 after deployment."
+}
+```
+
+Invalid request:
+
+```json
+{
+  "text": "Login API returns 500 after deployment."
+}
+```
+
+Invalid requests are rejected by FastAPI/Pydantic validation before calling Gemini.
+
+---
+
+### Response Validation
+
+The endpoint uses a Pydantic response model.
+
+This ensures the API returns the documented response envelope:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "category": "authentication",
+    "severity": "high",
+    "summary": "...",
+    "next_action": "..."
+  },
+  "error": null,
+  "metadata": {
+    "request_id": "req_...",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 842
+  }
+}
+```
+
+---
+
+### LLM Output Normalization
+
+LLM outputs can vary even when prompted with a fixed schema.
+
+The service normalizes category and severity values before returning a response.
+
+This protects downstream consumers from minor wording variations in model output.
+
+---
+
+### Fallback Handling
+
+The service does not return fake successful triage data when LLM processing fails.
+
+Instead, LLM failures are converted into fallback responses:
+
+```json
+{
+  "status": "fallback",
+  "data": null,
+  "error": {
+    "code": "LLM_PARSE_ERROR",
+    "message": "The model response could not be parsed as valid JSON."
+  },
+  "metadata": {
+    "request_id": "req_...",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 932
+  }
+}
+```
+
+This allows clients to route fallback cases to manual review or a retry workflow.
+
+---
+
+### Request Metadata
+
+Each triage response includes request-scoped metadata.
+
+The most important field is `request_id`.
+
+Clients can use `request_id` when reporting issues, and operators can use the same ID to correlate logs for a specific request.
+
+---
+
+## Logging
+
+The service uses Python logging to record runtime events.
+
+Typical events include:
 
 * Gemini API call started
 * Gemini API call succeeded
 * Unknown category received
 * Unknown severity received
-* Gemini triage failed
+* LLM provider failure
+* LLM parse failure
+* LLM schema failure
 * Fallback response returned
+* Unexpected server error
 
-Logging helps with debugging, monitoring, and production troubleshooting.
+Current log format:
+
+```text
+%(asctime)s %(levelname)s [%(name)s] %(message)s
+```
+
+Example:
+
+```text
+2026-06-30 20:30:00 WARNING [app.main] Triage request returned fallback response request_id=req_abc error_code=LLM_PARSE_ERROR latency_ms=932
+```
 
 ---
 
 ## Testing
 
-This project includes automated API tests using `pytest` and FastAPI's `TestClient`.
+This project uses `pytest` and FastAPI's `TestClient`.
 
-The tests verify:
+The tests should verify:
 
-* The root health endpoint returns a successful response.
-* The `/triage` endpoint rejects invalid request bodies with a `422` validation error.
-* The `/triage` endpoint returns a valid triage response using a mocked Gemini-dependent service function.
-* The triage response follows the expected response contract.
-* The `category` and `severity` fields are within the allowed values.
-* The `summary` and `next_action` fields are strings.
-
-The Gemini API call is mocked during tests using `pytest`'s `monkeypatch` fixture. This keeps the test suite fast, deterministic, and independent of API keys, network conditions, quota limits, or Gemini response variability.
-
-### Run Tests
-
-```bash
-python3 -m pytest
-```
-
-Expected result:
-
-```text
-3 passed
-```
-
-Warnings from FastAPI, Starlette, or httpx may appear depending on dependency versions. The key result is that all tests pass.
-
----
-
-## Current Test Coverage
-
-Current tests cover:
-
-| Test                                        | Purpose                                                                                  |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `test_root_endpoint`                        | Verifies that `GET /` returns a successful health response                               |
-| `test_triage_requires_message_field`        | Verifies that invalid request bodies return a `422` validation error                     |
-| `test_triage_endpoint_with_mocked_response` | Verifies the successful `/triage` flow with the Gemini-dependent service function mocked |
+* `GET /` returns a successful response.
+* `GET /health` returns `{"status": "ok"}`.
+* `POST /triage` rejects invalid request bodies.
+* `POST /triage` returns the v2 response envelope.
+* Success responses include `status`, `data`, `error`, and `metadata`.
+* `data.category` is one of the allowed categories.
+* `data.severity` is one of the allowed severities.
+* Fallback responses include a structured `error.code`.
+* Gemini-dependent flows are mocked during tests.
 
 ---
 
 ## Why Mock Gemini in Tests?
 
-The `/triage` endpoint depends on Gemini API in the actual service flow.
+The `/triage` endpoint depends on Gemini in the actual service flow.
 
-However, automated tests should not depend on:
+Automated tests should not depend on:
 
 * API keys
-* External network availability
+* external network availability
 * Gemini quota limits
 * Gemini response variability
-* External API downtime
-* Additional API cost
+* external API downtime
+* additional API cost
 
-Therefore, the Gemini-dependent service function is mocked during tests.
-
-Actual production flow:
-
-```text
-POST /triage
-    ↓
-FastAPI request validation
-    ↓
-triage endpoint
-    ↓
-triage_message()
-    ↓
-Gemini API call
-    ↓
-JSON parsing
-    ↓
-normalization
-    ↓
-TriageResponse
-    ↓
-JSON response
-```
-
-Test flow:
-
-```text
-POST /triage
-    ↓
-FastAPI request validation
-    ↓
-triage endpoint
-    ↓
-mocked fake_triage_message()
-    ↓
-TriageResponse
-    ↓
-JSON response
-```
-
-This allows the endpoint behavior to be tested without calling the actual Gemini API.
+The Gemini-dependent service function should be mocked during tests so the test suite remains fast, deterministic, and reliable.
 
 ---
 
-## Local Setup
+## Local Development
 
-### 1. Clone the Repository
+### 1. Clone Repository
 
 ```bash
 git clone https://github.com/blue-monkey0/llm-support-triage-api.git
@@ -503,7 +682,7 @@ cd llm-support-triage-api
 
 ---
 
-### 2. Create a Virtual Environment
+### 2. Create Virtual Environment
 
 ```bash
 python3 -m venv .venv
@@ -528,17 +707,17 @@ Create a `.env` file in the project root:
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
-Do not commit `.env` to GitHub.
+Do not commit `.env` to source control.
 
 ---
 
-### 5. Run the API Server Locally
+### 5. Run API Server
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-The API will run at:
+The API runs at:
 
 ```text
 http://127.0.0.1:8000
@@ -552,36 +731,19 @@ http://127.0.0.1:8000/docs
 
 ---
 
-## Docker Setup
+## Docker
 
-This project can also be executed inside a Docker container.
-
-Docker makes the API easier to run in a reproducible environment without relying on the local Python virtual environment.
-
----
-
-### 1. Build Docker Image
+### Build Image
 
 ```bash
 docker build -t llm-support-triage-api .
 ```
 
-This command builds a Docker image using the `Dockerfile` in the project root.
-
----
-
-### 2. Run Docker Container
+### Run Container
 
 ```bash
 docker run -p 8000:8000 --env-file .env --name triage-api llm-support-triage-api
 ```
-
-This command:
-
-* Runs the `llm-support-triage-api` image as a container.
-* Maps local port `8000` to container port `8000`.
-* Injects environment variables from `.env`.
-* Assigns the container name `triage-api`.
 
 The API will be available at:
 
@@ -589,42 +751,22 @@ The API will be available at:
 http://127.0.0.1:8000
 ```
 
-Swagger UI will be available at:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
----
-
-### 3. Stop Docker Container
+### Stop Container
 
 ```bash
 docker stop triage-api
 ```
 
----
-
-### 4. Remove Docker Container
+### Remove Container
 
 ```bash
 docker rm triage-api
 ```
 
----
-
-### 5. Run in Detached Mode
-
-To run the container in the background:
+### Run in Detached Mode
 
 ```bash
 docker run -d -p 8000:8000 --env-file .env --name triage-api llm-support-triage-api
-```
-
-Check running containers:
-
-```bash
-docker ps
 ```
 
 View logs:
@@ -633,33 +775,11 @@ View logs:
 docker logs triage-api
 ```
 
-Stop the container:
-
-```bash
-docker stop triage-api
-```
-
-Remove the container:
-
-```bash
-docker rm triage-api
-```
-
----
-
-### 6. Remove Stopped Containers
-
-To remove all stopped containers:
-
-```bash
-docker container prune
-```
-
 ---
 
 ## Docker Design Notes
 
-### Why use `python:3.12-slim`?
+### Base Image
 
 The Docker image uses:
 
@@ -667,11 +787,11 @@ The Docker image uses:
 FROM python:3.12-slim
 ```
 
-This provides a lightweight Linux-based Python 3.12 environment.
+This provides a lightweight Python 3.12 runtime.
 
 ---
 
-### Why use `WORKDIR /app`?
+### Working Directory
 
 ```dockerfile
 WORKDIR /app
@@ -681,7 +801,7 @@ This sets `/app` as the working directory inside the container.
 
 ---
 
-### Why copy `requirements.txt` before copying `app/`?
+### Dependency Layer Caching
 
 ```dockerfile
 COPY requirements.txt .
@@ -689,66 +809,32 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 ```
 
-This allows Docker to cache dependency installation separately from application code changes.
+Dependencies are copied and installed before application code to improve Docker build caching.
 
-If only the application code changes, Docker can reuse the dependency installation layer.
+If only application code changes, Docker can reuse the dependency installation layer.
 
 ---
 
-### Why use `--host 0.0.0.0`?
+### Runtime Host Binding
 
-Inside Docker, Uvicorn must listen on all network interfaces so that requests from the host machine can reach the container.
+Inside Docker, Uvicorn should bind to all network interfaces:
 
 ```dockerfile
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-Using `127.0.0.1` inside the container would only bind to the container's own localhost, which can make it inaccessible from the host machine.
+Using `0.0.0.0` allows the host machine to reach the API through Docker port mapping.
 
 ---
 
-### Why exclude `.env` from Docker image?
+### Secret Handling
 
-The `.env` file may contain sensitive secrets such as:
+Secrets such as `GEMINI_API_KEY` should not be baked into the Docker image.
 
-```text
-GEMINI_API_KEY=...
-```
-
-For security, `.env` is excluded from the Docker image using `.dockerignore`.
-
-Instead, environment variables are injected at runtime:
+Use runtime environment injection instead:
 
 ```bash
 docker run --env-file .env ...
-```
-
-This prevents secrets from being baked into the Docker image.
-
----
-
-## Example Request
-
-Using `curl`:
-
-```bash
-curl -X POST \
-  "http://127.0.0.1:8000/triage" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Payment is failing for all users after checkout"
-  }'
-```
-
-Example response:
-
-```json
-{
-  "category": "payment",
-  "severity": "critical",
-  "summary": "Payment issue detected.",
-  "next_action": "Check payment gateway logs."
-}
 ```
 
 ---
@@ -779,7 +865,7 @@ black app tests
 isort app tests
 ```
 
-### Run Formatter and Tests
+### Format and Test
 
 ```bash
 isort app tests
@@ -799,193 +885,80 @@ docker build -t llm-support-triage-api .
 docker run -p 8000:8000 --env-file .env --name triage-api llm-support-triage-api
 ```
 
-### Stop Docker Container
-
-```bash
-docker stop triage-api
-```
-
-### Remove Docker Container
-
-```bash
-docker rm triage-api
-```
-
 ---
 
-## Week 1 Retrospective
+## Operational Notes
 
-### What I Built
+### Client Handling
 
-I built an LLM-powered support triage API that receives a customer support message and returns a structured triage result.
+Clients should branch on `status` first.
 
-The service is not just a direct wrapper around an LLM API. It includes a production-aware backend workflow with validation, normalization, fallback handling, logging, automated tests, and Dockerized execution.
-
----
-
-### Key Technical Decisions
-
-#### 1. Use FastAPI for the API Layer
-
-FastAPI was chosen because it provides a clean way to define API endpoints, request models, response models, and automatically generated Swagger documentation.
-
-It also integrates well with Pydantic, which made it useful for validating both incoming requests and outgoing responses.
-
----
-
-#### 2. Use Pydantic Models for Request and Response Contracts
-
-The API uses Pydantic models to define the expected input and output structure.
-
-This keeps the API contract explicit:
-
-* clients must send a `message` field
-* the server must return `category`, `severity`, `summary`, and `next_action`
-
-This helps prevent unexpected request and response shapes.
-
----
-
-#### 3. Normalize LLM Output Before Returning It
-
-LLM responses can vary even when the prompt asks for a specific structure.
-
-To make the API more stable, the service normalizes category and severity values into controlled sets.
-
-This makes the response easier to consume by downstream systems.
-
----
-
-#### 4. Add Fallback Handling for LLM Failures
-
-External LLM APIs can fail due to quota limits, network issues, invalid responses, or unexpected formatting.
-
-Instead of allowing those failures to crash the API, the service returns a safe fallback response that follows the same schema.
-
-This improves reliability and user experience.
-
----
-
-#### 5. Mock Gemini During Automated Tests
-
-The Gemini-dependent service function is mocked during endpoint tests.
-
-This keeps tests:
-
-* fast
-* deterministic
-* independent of API keys
-* independent of network conditions
-* independent of quota limits
-* independent of Gemini response variability
-
-This is closer to how production API workflows should be tested.
-
----
-
-#### 6. Dockerize the API
-
-The API was dockerized so it can run in a reproducible environment.
-
-Secrets such as the Gemini API key are not included in the image. Instead, they are injected at runtime using an environment file.
-
-This separates application code from sensitive configuration.
-
----
-
-### Challenges
-
-#### 1. LLM Response Variability
-
-One challenge was that Gemini could return categories in slightly different formats, such as `Payments` instead of `payment`.
-
-This was addressed with category and severity normalization.
-
----
-
-#### 2. External API Dependency in Tests
-
-Directly calling Gemini during tests would make the test suite slow, expensive, and unstable.
-
-This was addressed by mocking the Gemini-dependent function with `monkeypatch`.
-
----
-
-#### 3. Safe Secret Handling in Docker
-
-The Gemini API key should not be copied into the Docker image.
-
-This was addressed by excluding `.env` from the Docker build context and injecting it only at runtime.
-
----
-
-### What I Learned
-
-Through this project, I practiced building an LLM-powered API as a backend service rather than a simple chatbot.
-
-I learned how to:
-
-* structure a FastAPI project
-* define request and response models with Pydantic
-* integrate Gemini API into a backend service
-* parse and validate LLM-generated JSON
-* normalize unpredictable LLM outputs
-* add fallback behavior for external API failures
-* use logging for observability
-* write endpoint tests with pytest and TestClient
-* mock external API dependencies
-* dockerize a FastAPI application
-* pass secrets safely at runtime using environment variables
-* document architecture and runtime behavior in a README
-
----
-
-### Future Improvements
-
-Potential improvements include:
-
-* adding GitHub Actions CI
-* adding more service-level unit tests
-* improving prompt versioning
-* making Gemini model name configurable with environment variables
-* adding latency logging
-* adding request IDs for traceability
-* deploying the API to a cloud runtime
-* adding a simple frontend or dashboard
-* adding persistent storage for triage history
-
----
-
-## Portfolio Explanation
-
-This project demonstrates how to build a production-aware LLM-powered API service.
-
-It includes:
-
-* Backend API design with FastAPI
-* Request and response validation with Pydantic
-* Gemini API integration
-* LLM response normalization
-* Fallback handling for external API failures
-* Logging for debugging and observability
-* Automated API testing with pytest
-* Mocking external API dependencies for deterministic tests
-* Docker-based reproducible API execution
-* README-based architecture and workflow documentation
-
-A concise interview explanation:
+Recommended handling:
 
 ```text
-I built an LLM-powered customer support triage API using FastAPI and Gemini API.
-The service receives a customer issue message and returns a structured triage result including category, severity, summary, and next action.
-To make the API more production-aware, I added Pydantic validation, response normalization, fallback handling, logging, pytest-based endpoint tests, and Docker-based execution.
-The Gemini-dependent service function is mocked during tests to keep the test suite deterministic and independent of external API availability.
-The application can be run locally or inside a Docker container with environment variables injected at runtime.
-I also documented the system architecture, test flow, and Docker runtime flow using Mermaid diagrams in the README.
+if status == "success":
+    consume data
+elif status == "fallback":
+    route to manual review or retry workflow
+elif status == "error":
+    treat as service failure
+```
+
+Clients should use `error.code` for programmatic handling.
+
+Clients should not parse `error.message`.
+
+---
+
+### Fallback Semantics
+
+Fallback responses indicate that the API server handled the request but could not produce a validated LLM triage result.
+
+Typical fallback causes:
+
+* LLM provider call failed
+* LLM response was not valid JSON
+* LLM response was missing required fields
+
+Fallback responses should generally be routed to manual review, retry, or operational monitoring workflows.
+
+---
+
+### Request ID Usage
+
+Each response includes `metadata.request_id`.
+
+Use this value when investigating request-specific issues.
+
+Example:
+
+```text
+request_id=req_9f1c2d...
+```
+
+This ID can be used to correlate API responses with server logs.
+
+---
+
+## Version
+
+Current API version:
+
+```text
+0.2.0
+```
+
+This version introduces the v2 response envelope:
+
+```text
+status
+data
+error
+metadata
 ```
 
 ---
 
 ## License
 
-This project is for personal learning and portfolio purposes.
+Internal development and demonstration use.
