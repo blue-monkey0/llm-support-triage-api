@@ -1,9 +1,7 @@
 import json
 import logging
 
-from google import genai
-
-from app.config import GEMINI_API_KEY
+from app.clients.gemini_client import GeminiClient
 from app.core.errors import AppError, ErrorCode
 from app.schemas.triage import TriageResult
 
@@ -11,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 GEMINI_MODEL = "gemini-2.5-flash"
 
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 CATEGORY_ALIASES = {
     "authentication": "authentication",
@@ -83,14 +80,6 @@ JSON schema:
 """
 
 
-def call_gemini(prompt: str) -> str:
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-    return response.text
-
-
 def normalize_category(category: str) -> str:
     normalized = category.strip().lower()
 
@@ -128,14 +117,14 @@ def parse_llm_json_response(response_text: str) -> dict:
     return json.loads(cleaned_text)
 
 
-def triage_message(message: str) -> TriageResult:
+def triage_message(
+    message: str, llm_client: GeminiClient | None = None
+) -> TriageResult:
+    client = llm_client or GeminiClient()
+    prompt = build_triage_prompt(message)
+
     try:
-        logger.info("Calling Gemini API for triage")
-
-        prompt = build_triage_prompt(message)
-        response = call_gemini(prompt)
-
-        logger.info("Gemini API call succeeded")
+        response_text = client.generate_content(prompt)
 
     except Exception as exc:
         logger.exception("Gemini API call failed")
@@ -145,7 +134,7 @@ def triage_message(message: str) -> TriageResult:
         ) from exc
 
     try:
-        parsed_response = parse_llm_json_response(response)
+        parsed_response = parse_llm_json_response(response_text)
 
     except json.JSONDecodeError as exc:
         logger.exception("Failed to parse Gemini response as JSON.")
