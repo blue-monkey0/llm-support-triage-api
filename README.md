@@ -17,7 +17,7 @@ Given a customer support message, the API returns:
 * concise issue summary
 * recommended next operational action
 * request-scoped metadata
-* structured error details for fallback or failure scenarios
+* structured error details for fallback, validation, or failure scenarios
 
 The API is designed to make LLM output safer and easier to consume from backend services, support dashboards, internal tools, and automation pipelines.
 
@@ -30,14 +30,16 @@ The API is designed to make LLM output safer and easier to consume from backend 
 * Pydantic request validation
 * Pydantic response validation
 * Stable v2 response envelope
+* Standardized validation error responses
 * Explicit success, fallback, and error states
 * Machine-readable error codes
+* Request ID generation
+* Incoming `x-request-id` support
+* Request-level metadata
+* Latency measurement
 * Category normalization
 * Severity normalization
 * JSON parsing guard for LLM responses
-* Request-level metadata
-* Request ID generation
-* Latency measurement
 * Logging for operational troubleshooting
 * Pytest-based API tests
 * Mockable LLM client interface
@@ -76,7 +78,8 @@ llm-support-triage-api/
 │   │   └── gemini_client.py
 │   ├── core/
 │   │   ├── __init__.py
-│   │   └── errors.py
+│   │   ├── errors.py
+│   │   └── request_context.py
 │   ├── schemas/
 │   │   ├── __init__.py
 │   │   ├── common.py
@@ -102,13 +105,13 @@ llm-support-triage-api/
 
 ### Layer Responsibilities
 
-| Layer         | Path                             | Responsibility                                                                              |
-| ------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
-| API layer     | `app/main.py`                    | Handles HTTP requests, creates response envelopes, and exposes endpoints.                   |
-| Service layer | `app/services/triage_service.py` | Builds prompts, parses LLM output, normalizes values, and returns validated triage results. |
-| Client layer  | `app/clients/gemini_client.py`   | Owns direct communication with Gemini API.                                                  |
-| Schema layer  | `app/schemas/`                   | Defines request, response, result, error, and metadata contracts.                           |
-| Core layer    | `app/core/`                      | Defines shared application errors and error codes.                                          |
+| Layer         | Path                             | Responsibility                                                                                          |
+| ------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| API layer     | `app/main.py`                    | Handles HTTP requests, creates response envelopes, registers exception handlers, and exposes endpoints. |
+| Service layer | `app/services/triage_service.py` | Builds prompts, parses LLM output, normalizes values, and returns validated triage results.             |
+| Client layer  | `app/clients/gemini_client.py`   | Owns direct communication with Gemini API.                                                              |
+| Schema layer  | `app/schemas/`                   | Defines request, response, result, error, and metadata contracts.                                       |
+| Core layer    | `app/core/`                      | Defines shared application errors, error codes, and request context helpers.                            |
 
 ---
 
@@ -119,7 +122,8 @@ flowchart LR
     Client[Client / Swagger UI / curl] --> FastAPI[FastAPI App]
     FastAPI --> Validation[Pydantic Request Validation]
     Validation --> Endpoint[API Endpoint]
-    Endpoint --> Service[Triage Service]
+    Endpoint --> RequestID[Request ID Resolution]
+    RequestID --> Service[Triage Service]
     Service --> GeminiClient[Gemini Client]
     GeminiClient --> Gemini[Gemini API]
     Gemini --> GeminiClient
@@ -131,7 +135,24 @@ flowchart LR
     Envelope --> Client
 ```
 
-The API receives a support message from a client, validates the request body, sends the message to the triage service, calls Gemini through the provider client, parses the model response, normalizes category and severity values, and returns a stable response envelope.
+The API receives a support message from a client, validates the request body, resolves a request ID, sends the message to the triage service, calls Gemini through the provider client, parses the model response, normalizes category and severity values, and returns a stable response envelope.
+
+---
+
+### Validation Error Flow
+
+```mermaid
+flowchart LR
+    Client[Client] --> FastAPI[FastAPI App]
+    FastAPI --> Validation[Pydantic Request Validation]
+    Validation -->|Invalid Request| Handler[RequestValidationError Handler]
+    Handler --> ErrorResponse[VALIDATION_ERROR Envelope]
+    ErrorResponse --> Client
+```
+
+Invalid request bodies are handled by a custom validation exception handler.
+
+Instead of returning FastAPI's default validation error shape, the API returns the same v2 envelope structure used by the rest of the service.
 
 ---
 
@@ -251,7 +272,7 @@ error
 | ---------- | ------------------------------------------------------------------------------------------------- |
 | `success`  | The service produced a validated triage result.                                                   |
 | `fallback` | The service could not produce a validated LLM result and returned a controlled fallback response. |
-| `error`    | The request failed due to an unexpected internal service error.                                   |
+| `error`    | The request failed due to validation failure or an unexpected internal service error.             |
 
 ---
 
@@ -325,6 +346,119 @@ Clients should not parse `error.message`.
 | `request_id` | string          | Unique identifier for tracing a single request. |
 | `model`      | string or null  | LLM model used for the request.                 |
 | `latency_ms` | integer or null | End-to-end request latency in milliseconds.     |
+
+---
+
+## Request ID Handling
+
+The API supports request-scoped tracing through `metadata.request_id`.
+
+If the client sends an `x-request-id` header, the API uses that value.
+
+If the client does not send an `x-request-id` header, the API generates a new request ID.
+
+### Client-Provided Request ID
+
+```bash
+curl -X POST "http://127.0.0.1:8000/triage" \
+  -H "Content-Type: application/json" \
+  -H "x-request-id: req_manual_test_001" \
+  -d '{
+    "message": "Users cannot log in with SSO after deployment."
+  }'
+```
+
+Example response:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "category": "authentication",
+    "severity": "high",
+    "summary": "Users cannot log in with SSO after deployment.",
+    "next_action": "Check SSO provider logs, token claims, and recent authentication-related deployment changes."
+  },
+  "error": null,
+  "metadata": {
+    "request_id": "req_manual_test_001",
+    "model": "gemini-2.5-flash",
+    "latency_ms": 842
+  }
+}
+```
+
+Request IDs should be included in logs and client-reported incidents to support request-level troubleshooting.
+
+---
+
+## Validation Error Handling
+
+Invalid request bodies are returned using the same response envelope as the rest of the API.
+
+### Missing Required Field
+
+Request:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/triage" \
+  -H "Content-Type: application/json" \
+  -H "x-request-id: req_validation_test_001" \
+  -d '{
+    "text": "Payment failed after checkout."
+  }'
+```
+
+Response:
+
+```json
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed."
+  },
+  "metadata": {
+    "request_id": "req_validation_test_001",
+    "model": null,
+    "latency_ms": null
+  }
+}
+```
+
+### Empty Message
+
+Request:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/triage" \
+  -H "Content-Type: application/json" \
+  -H "x-request-id: req_empty_message_test_001" \
+  -d '{
+    "message": ""
+  }'
+```
+
+Response:
+
+```json
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed."
+  },
+  "metadata": {
+    "request_id": "req_empty_message_test_001",
+    "model": null,
+    "latency_ms": null
+  }
+}
+```
+
+Validation errors use HTTP `422 Unprocessable Entity`.
 
 ---
 
@@ -439,6 +573,17 @@ curl -X POST "http://127.0.0.1:8000/triage" \
   }'
 ```
 
+### curl with `x-request-id`
+
+```bash
+curl -X POST "http://127.0.0.1:8000/triage" \
+  -H "Content-Type: application/json" \
+  -H "x-request-id: req_manual_test_001" \
+  -d '{
+    "message": "Users cannot log in with SSO after the latest deployment."
+  }'
+```
+
 ### Swagger UI
 
 Swagger UI is available at:
@@ -535,6 +680,24 @@ Swagger UI and curl send the same underlying HTTP request when the method, URL, 
 }
 ```
 
+### Validation Error
+
+```json
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed."
+  },
+  "metadata": {
+    "request_id": "req_validation_test_001",
+    "model": null,
+    "latency_ms": null
+  }
+}
+```
+
 ### Internal Error
 
 ```json
@@ -578,6 +741,8 @@ Invalid request:
 ```
 
 Invalid requests are rejected by FastAPI/Pydantic validation before calling Gemini.
+
+Validation failures are returned as structured `VALIDATION_ERROR` envelopes.
 
 ---
 
@@ -673,6 +838,7 @@ Typical events include:
 * Gemini API call succeeded
 * unknown category received
 * unknown severity received
+* request validation failure
 * LLM provider failure
 * LLM parse failure
 * LLM schema failure
@@ -685,10 +851,22 @@ Current log format:
 %(asctime)s %(levelname)s [%(name)s] %(message)s
 ```
 
-Example:
+Example validation error log:
 
 ```text
-2026-06-30 20:30:00 WARNING [app.main] Triage request returned fallback response request_id=req_abc error_code=LLM_PARSE_ERROR latency_ms=932
+2026-06-30 20:30:00 WARNING [app.main] Request validation failed path=/triage request_id=req_validation_test_001 error_code=VALIDATION_ERROR errors=[...]
+```
+
+Example fallback log:
+
+```text
+2026-06-30 20:31:00 WARNING [app.main] Triage request returned fallback response request_id=req_abc error_code=LLM_PARSE_ERROR latency_ms=932
+```
+
+Example success log:
+
+```text
+2026-06-30 20:32:00 INFO [app.main] Triage request succeeded request_id=req_abc latency_ms=842 model=gemini-2.5-flash
 ```
 
 ---
@@ -702,6 +880,9 @@ The tests should verify:
 * `GET /` returns a successful response.
 * `GET /health` returns `{"status": "ok"}`.
 * `POST /triage` rejects invalid request bodies.
+* validation errors return the v2 response envelope.
+* validation errors include `error.code = VALIDATION_ERROR`.
+* `x-request-id` is reflected in `metadata.request_id`.
 * `POST /triage` returns the v2 response envelope.
 * success responses include `status`, `data`, `error`, and `metadata`.
 * `data.category` is one of the allowed categories.
@@ -960,12 +1141,32 @@ if status == "success":
 elif status == "fallback":
     route to manual review or retry workflow
 elif status == "error":
-    treat as service failure
+    inspect error.code and handle according to API contract
 ```
 
 Clients should use `error.code` for programmatic handling.
 
 Clients should not parse `error.message`.
+
+---
+
+### Validation Error Semantics
+
+Validation errors indicate that the client request did not match the required request schema.
+
+Typical causes:
+
+* missing `message` field
+* empty `message` value
+* invalid request body format
+
+Validation errors return HTTP `422` and use the standard response envelope with:
+
+```text
+status = error
+error.code = VALIDATION_ERROR
+data = null
+```
 
 ---
 
@@ -997,6 +1198,8 @@ request_id=req_9f1c2d...
 
 This ID can be used to correlate API responses with server logs.
 
+If a client provides `x-request-id`, the API preserves that value in the response metadata.
+
 ---
 
 ### Provider Client Boundary
@@ -1023,6 +1226,8 @@ This version includes:
 * structured error object
 * request metadata
 * Gemini provider client isolation
+* standardized validation error responses
+* `x-request-id` support
 
 ---
 
