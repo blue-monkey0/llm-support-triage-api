@@ -4,9 +4,12 @@ import logging
 from google import genai
 
 from app.config import GEMINI_API_KEY
-from app.schemas.triage import TriageResponse
+from app.core.errors import AppError, ErrorCode
+from app.schemas.triage import TriageResult
 
 logger = logging.getLogger(__name__)
+
+GEMINI_MODEL = "gemini-2.5-flash"
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -51,6 +54,43 @@ ALLOWED_SEVERITIES = {
 }
 
 
+def build_triage_prompt(message: str) -> str:
+    return f"""
+You are a support triage assistant.
+
+Analyze the customer issue.
+
+Customer message:
+{message}
+
+Return only valid JSON.
+Do not include markdown.
+Do not include explanation.
+
+Use only one of these category values:
+authentication, payment, performance, deployment, integration, general
+
+Use only one of these severity values:
+low, medium, high, critical
+
+JSON schema:
+{{
+  "category": "authentication | payment | performance | deployment | integration | general",
+  "severity": "low | medium | high | critical",
+  "summary": "string",
+  "next_action": "string"
+}}
+"""
+
+
+def call_gemini(prompt: str) -> str:
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+    return response.text
+
+
 def normalize_category(category: str) -> str:
     normalized = category.strip().lower()
 
@@ -88,65 +128,46 @@ def parse_llm_json_response(response_text: str) -> dict:
     return json.loads(cleaned_text)
 
 
-def fallback_triage_response() -> TriageResponse:
-    return TriageResponse(
-        category="general",
-        severity="low",
-        summary="LLM triage failed. Returning fallback response.",
-        next_action="Review the customer message manually.",
-    )
-
-
-def triage_message(message: str) -> TriageResponse:
-    prompt = f"""
-You are a support triage assistant.
-
-Analyze the customer issue.
-
-Customer message:
-{message}
-
-Return only valid JSON.
-Do not include markdown.
-Do not include explanation.
-
-Use only one of these category values:
-authentication, payment, performance, deployment, integration, general
-
-Use only one of these severity values:
-low, medium, high, critical
-
-JSON schema:
-{{
-  "category": "authentication | payment | performance | deployment | integration | general",
-  "severity": "low | medium | high | critical",
-  "summary": "string",
-  "next_action": "string"
-}}
-"""
-
+def triage_message(message: str) -> TriageResult:
     try:
         logger.info("Calling Gemini API for triage")
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+        prompt = build_triage_prompt(message)
+        response = call_gemini(prompt)
 
         logger.info("Gemini API call succeeded")
 
-        parsed_response = parse_llm_json_response(response.text)
+    except Exception as exc:
+        logger.exception("Gemini API call failed")
+        raise AppError(
+            code=ErrorCode.LLM_PROVIDER_ERROR,
+            message="The upstream LLM provider returned an error.",
+        ) from exc
 
+    try:
+        parsed_response = parse_llm_json_response(response)
+
+    except json.JSONDecodeError as exc:
+        logger.exception("Failed to parse Gemini response as JSON.")
+        raise AppError(
+            code=ErrorCode.LLM_PARSE_ERROR,
+            message="The model response could not be parsed as valid JSON.",
+        ) from exc
+
+    try:
         category = normalize_category(parsed_response["category"])
         severity = normalize_severity(parsed_response["severity"])
 
-        return TriageResponse(
+        return TriageResult(
             category=category,
             severity=severity,
             summary=parsed_response["summary"],
             next_action=parsed_response["next_action"],
         )
 
-    except Exception:
-        logger.exception("Gemini triage failed")
-        return fallback_triage_response()
+    except KeyError as exc:
+        logger.exception("Gemini response is missing required fields.")
+        raise AppError(
+            code=ErrorCode.LLM_SCHEMA_EEROR,
+            message="The model response is missing one or more required fields.",
+        ) from exc
