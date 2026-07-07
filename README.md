@@ -41,7 +41,8 @@ The API is designed to make LLM output safer and easier to consume from backend 
 * Severity normalization
 * JSON parsing guard for LLM responses
 * Logging for operational troubleshooting
-* Pytest-based API tests
+* Pytest-based API contract tests
+* Service-layer tests with fake LLM clients
 * Mockable LLM client interface
 * Docker-based local runtime
 * Environment variable injection through `.env`
@@ -88,7 +89,8 @@ llm-support-triage-api/
 │       ├── __init__.py
 │       └── triage_service.py
 ├── tests/
-│   └── test_triage_api.py
+│   ├── test_triage_api.py
+│   └── test_triage_service.py
 ├── Dockerfile
 ├── .dockerignore
 ├── README.md
@@ -875,20 +877,46 @@ Example success log:
 
 This project uses `pytest` and FastAPI's `TestClient`.
 
-The tests should verify:
+The test suite covers both the HTTP API contract and the service-layer LLM handling logic.
 
-* `GET /` returns a successful response.
+### API Contract Tests
+
+`tests/test_triage_api.py` verifies:
+
+* `GET /` returns the root service message.
 * `GET /health` returns `{"status": "ok"}`.
-* `POST /triage` rejects invalid request bodies.
-* validation errors return the v2 response envelope.
-* validation errors include `error.code = VALIDATION_ERROR`.
-* `x-request-id` is reflected in `metadata.request_id`.
-* `POST /triage` returns the v2 response envelope.
+* `POST /triage` returns the v2 response envelope for successful requests.
 * success responses include `status`, `data`, `error`, and `metadata`.
 * `data.category` is one of the allowed categories.
 * `data.severity` is one of the allowed severities.
-* fallback responses include a structured `error.code`.
-* Gemini-dependent flows are mocked during tests.
+* client-provided `x-request-id` is preserved in `metadata.request_id`.
+* a request ID is generated when `x-request-id` is missing.
+* missing `message` fields return HTTP `422`.
+* empty `message` values return HTTP `422`.
+* validation errors return `status = error`.
+* validation errors include `error.code = VALIDATION_ERROR`.
+* application-level LLM failures return `status = fallback`.
+* unexpected server errors return `status = error`.
+
+### Service-Layer Tests
+
+`tests/test_triage_service.py` verifies:
+
+* markdown-wrapped JSON can be parsed.
+* valid model responses are converted into `TriageResult`.
+* category aliases are normalized.
+* unknown severity values are normalized to `medium`.
+* provider failures raise `AppError` with `LLM_PROVIDER_ERROR`.
+* malformed JSON raises `AppError` with `LLM_PARSE_ERROR`.
+* missing response fields raise `AppError` with `LLM_SCHEMA_ERROR`.
+
+### Test Command
+
+```bash
+python3 -m pytest
+```
+
+The tests mock Gemini-dependent flows so the suite does not require a real API key or network call.
 
 ---
 
@@ -1228,6 +1256,8 @@ This version includes:
 * Gemini provider client isolation
 * standardized validation error responses
 * `x-request-id` support
+* API contract tests for success, validation, fallback, and internal error responses
+* service-layer tests for provider, parse, and schema failure handling
 
 ---
 

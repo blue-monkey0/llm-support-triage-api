@@ -157,6 +157,6 @@ def triage_message(
     except KeyError as exc:
         logger.exception("Gemini response is missing required fields.")
         raise AppError(
-            code=ErrorCode.LLM_SCHEMA_EEROR,
+            code=ErrorCode.LLM_SCHEMA_ERROR,
             message="The model response is missing one or more required fields.",
         ) from exc
