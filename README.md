@@ -45,6 +45,7 @@ The API is designed to make LLM output safer and easier to consume from backend 
 * Service-layer tests with fake LLM clients
 * Mockable LLM client interface
 * Docker-based local runtime
+* GitHub Actions CI for pull request validation
 * Environment variable injection through `.env`
 
 ---
@@ -62,6 +63,7 @@ The API is designed to make LLM output safer and easier to consume from backend 
 * Black
 * isort
 * Docker
+* GitHub Actions
 * Mermaid
 
 ---
@@ -70,6 +72,9 @@ The API is designed to make LLM output safer and easier to consume from backend 
 
 ```text
 llm-support-triage-api/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── app/
 │   ├── __init__.py
 │   ├── main.py
@@ -999,6 +1004,146 @@ http://127.0.0.1:8000/docs
 
 ---
 
+## Continuous Integration
+
+This project uses GitHub Actions for CI.
+
+The workflow file is located at:
+
+```text
+.github/workflows/ci.yml
+```
+
+The CI workflow runs automatically when:
+
+* a pull request is opened or updated
+* code is pushed to the `main` branch
+
+The workflow verifies that the project can be tested, formatted, and built in a clean Linux environment.
+
+---
+
+### CI Checks
+
+The workflow runs the following checks:
+
+```text
+1. Check out repository code
+2. Set up Python 3.12
+3. Install dependencies from requirements.txt
+4. Check import sorting with isort
+5. Check code formatting with black
+6. Run pytest
+7. Build Docker image
+```
+
+These checks are intended to catch common integration problems before code is merged.
+
+---
+
+### Workflow Configuration
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Test, Format, and Build
+    runs-on: ubuntu-latest
+
+    env:
+      GEMINI_API_KEY: dummy-api-key-for-ci
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check import sorting
+        run: isort --check-only app tests
+
+      - name: Check code formatting
+        run: black --check app tests
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Build Docker image
+        run: docker build -t llm-support-triage-api .
+```
+
+---
+
+### Why the CI Uses a Dummy Gemini API Key
+
+The CI environment sets:
+
+```text
+GEMINI_API_KEY=dummy-api-key-for-ci
+```
+
+The test suite should not call the real Gemini API.
+
+API tests use monkeypatching, and service-layer tests use fake LLM clients to avoid external network calls, real API keys, provider quota usage, and nondeterministic model responses.
+
+The dummy key exists only to make application imports safe in CI.
+
+---
+
+### Local CI Equivalent
+
+Before opening a pull request, run the same checks locally:
+
+```bash
+isort --check-only app tests
+black --check app tests
+python3 -m pytest
+docker build -t llm-support-triage-api .
+```
+
+If formatting checks fail, apply formatting locally:
+
+```bash
+isort app tests
+black app tests
+```
+
+Then rerun the checks.
+
+---
+
+### CI Design Notes
+
+The workflow intentionally performs checks rather than modifying code.
+
+For example:
+
+```bash
+isort --check-only app tests
+black --check app tests
+```
+
+These commands fail the workflow if formatting is incorrect, but they do not rewrite files inside CI.
+
+This keeps formatting changes explicit and reviewable in the developer's branch.
+
+---
+
 ## Docker
 
 ### Build Image
@@ -1141,6 +1286,16 @@ black app tests
 python3 -m pytest
 ```
 
+
+### Run CI Checks Locally
+
+```bash
+isort --check-only app tests
+black --check app tests
+python3 -m pytest
+docker build -t llm-support-triage-api .
+```
+
 ### Build Docker Image
 
 ```bash
@@ -1256,6 +1411,8 @@ This version includes:
 * Gemini provider client isolation
 * standardized validation error responses
 * `x-request-id` support
+* API and service-layer test coverage
+* GitHub Actions CI for test, format, and Docker build checks
 * API contract tests for success, validation, fallback, and internal error responses
 * service-layer tests for provider, parse, and schema failure handling
 
